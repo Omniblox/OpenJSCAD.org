@@ -12,12 +12,13 @@ Notes:
 // import the required modules if necessary
 if(typeof module !== 'undefined') {    // used via nodejs
   if (typeof module.CAG === 'undefined') {
-    CAG = require(lib+'../csg.js').CAG;
+    CAG = require(lib + '../csg.js').CAG;
   }
   if (typeof module.OpenJsCad === 'undefined') {
-    OpenJsCad = require(lib+'../openjscad.js').OpenJsCad;
+    OpenJsCad = require(lib + '../openjscad.js').OpenJsCad;
   }
-  var sax = require(lib+"lib/sax-js-1.1.5/lib/sax");
+  var sax = require(lib + "lib/sax-js-1.1.5/lib/sax");
+  var SvgPathTools = require(lib + "lib/svg-tools/svg-path-tools").SvgPathTools;
 }
 
 (function(module) {
@@ -723,6 +724,7 @@ sax.SAXParser.prototype.svgPath = function(element) {
       obj.commands.push(co);
     }
   }
+  obj.rawElement = element;
   return obj;
 }
 
@@ -907,7 +909,6 @@ sax.SAXParser.prototype.codify = function(group) {
         break;
       case 'path':
         code += indent+'var '+on+' = new CAG();\n';
-
         var r = this.cssPxUnit; // default
         if ('strokeWidth' in obj) {
           r  = this.cagLengthP(obj.strokeWidth)/2;
@@ -917,6 +918,9 @@ sax.SAXParser.prototype.codify = function(group) {
             r  = this.cagLengthP(v)/2;
           }
         }
+
+        obj.commands = orderPath(obj);
+
       // Note: All values are SVG values
         var sx = 0;     // starting position
         var sy = 0;
@@ -1138,7 +1142,7 @@ sax.SAXParser.prototype.codify = function(group) {
             case 'Z':
               code += indent+pn+' = '+pn+'.close();\n';
               code += indent+pn+' = '+pn+'.innerToCAG();\n';
-              code += indent+on+' = '+on+'.union('+pn+');\n';
+              code += indent+on+' = '+on+'.' + co.o +'('+pn+');\n';
               cx =  sx; cy = sy; // return to the starting point
               pc = true;
               break;
@@ -1202,6 +1206,78 @@ sax.SAXParser.prototype.codify = function(group) {
   this.svgGroups.pop();
 
   return code;
+}
+
+var orderPath = function (srcObj){
+  var normalizedPathData = SvgPathTools.normalizedAbsPath(srcObj.rawElement.D);
+  var processedPathParts = [];
+  var currPath = "";
+  var currPathSegments = [];
+
+  // set up data structures
+  for (var i in normalizedPathData) {
+    var seg = normalizedPathData[i];
+
+    currPath += seg.type;
+    currPathSegments.push(seg);
+
+    if(seg.type == "Z")
+    {
+      // TODO: refactor so i don't need to go array -> string -> array
+      var processedPath = SvgPathTools.splitSegments(currPath);
+
+      processedPathParts.push({string: currPath,
+                               processed: processedPath,
+                               normalized: currPathSegments,
+                               type: "external",
+                               id: i});
+      currPath = "";
+      currPathSegments = [];
+
+    } else if(seg.type == "M" || seg.type == "L"){
+      var [x, y] = seg.values;
+      currPath += x + "," + y + " ";
+    }
+    else if(seg.type == "C"){
+      var [x1, y1, x2, y2, x, y] = seg.values;
+      currPath += x1 + "," + y1 + " " + x2 + "," + y2 + " " + x + "," + y + " ";
+    }
+
+  }
+
+  // determine internal elements
+  for (var i in processedPathParts) {
+    var part =  processedPathParts[i];
+
+    for (var j in processedPathParts) {
+      var otherPart = processedPathParts[j];
+      if (otherPart.id === part.id) { continue; }
+      if (SvgPathTools.isInside(otherPart.processed[0].coords[0], part.processed))
+        otherPart.type = "internal";
+
+    }
+  }
+
+  var jscadPath = [];
+
+  for (var i in processedPathParts) {
+    var part =  processedPathParts[i];
+
+    for(var j in part.normalized) {
+      var pathInstruction = part.normalized[j];
+      var operation = null;
+      if (pathInstruction['type'] == 'Z'){
+        operation = "union";
+        if (part.type == "internal") {
+          operation = "subtract";
+        }
+      }
+
+      jscadPath.push({c:pathInstruction['type'], p: pathInstruction['values'], o: operation})
+    }
+  }
+
+  return jscadPath;
 }
 
 OpenJsCad.createSvgParser = function(src, pxPmm) {
@@ -1360,7 +1436,7 @@ OpenJsCad.parseSVG = function(src, fn, options) {
   if ('pxPmm' in options) { pxPmm = options.pxPmm; }
 // parse the SVG source
   var parser = OpenJsCad.createSvgParser(src, pxPmm);
-// convert the internal objects to JSCAD code 
+// convert the internal objects to JSCAD code
   var code = '';
   code += '//\n';
   code += "// producer: OpenJSCAD.org "+OpenJsCad.version+" SVG Importer\n";
@@ -1403,4 +1479,3 @@ CAG.fromSVG = function(src, options) {
   module.CAG = CAG;
   module.OpenJsCad = OpenJsCad;
 })(this);
-

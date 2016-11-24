@@ -71,7 +71,11 @@ onmessage = function (e) {
             r.source = r.converted = data.source;
             break;
           case 'svg':
-            importScripts(r.baseurl+'csg.js',r.baseurl+'openjscad.js',r.baseurl+'js/lib/sax-js-1.1.5/lib/sax.js',r.baseurl+'js/jscad-parseSVG.js');
+            importScripts(r.baseurl+'csg.js'
+                          ,r.baseurl+'openjscad.js'
+                          ,r.baseurl+'js/lib/sax-js-1.1.5/lib/sax.js'
+                          ,r.baseurl+'js/jscad-parseSVG.js'
+                          ,r.baseurl+'js/lib/svg-path-tools.js');
             r.source = r.converted = OpenJsCad.parseSVG(data.source,data.filename);
             break;
           default:
